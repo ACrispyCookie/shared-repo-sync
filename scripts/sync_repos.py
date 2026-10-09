@@ -111,6 +111,28 @@ def ensure_destination_repository(destination: str, token: str, private: bool) -
     raise RuntimeError(f"Could not create destination repository {owner}/{repo}: HTTP {created.status} {created.text}")
 
 
+def exclude_github_pull_refs(bare: Path) -> None:
+    """Drop GitHub-managed PR refs; destinations reject pushes to refs/pull/*."""
+    refs = subprocess.run(
+        ["git", "for-each-ref", "--format=%(refname)", "refs/pull/"],
+        cwd=bare,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    if not refs:
+        return
+
+    subprocess.run(
+        ["git", "update-ref", "--stdin"],
+        cwd=bare,
+        input="".join(f"delete {ref}\n" for ref in refs),
+        text=True,
+        check=True,
+    )
+    print(f"Skipped {len(refs)} read-only GitHub pull-request refs", flush=True)
+
+
 def sync_repo(repo: dict[str, object], token: str) -> None:
     name = str(repo["name"])
     source = str(repo["source"])
@@ -128,6 +150,7 @@ def sync_repo(repo: dict[str, object], token: str) -> None:
             run(["git", "lfs", "fetch", "--all"], cwd=bare)
         run(["git", "remote", "set-url", "--push", "origin", with_token(destination, token)], cwd=bare)
         run(["git", "fetch", "-p", "origin"], cwd=bare)
+        exclude_github_pull_refs(bare)
         run(["git", "push", "--mirror"], cwd=bare)
         if use_lfs:
             run(["git", "lfs", "push", "--all", with_token(destination, token)], cwd=bare)
